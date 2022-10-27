@@ -1,0 +1,305 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "location": {
+            "type": "string",
+            "defaultValue": "[resourceGroup().location]",
+            "metadata": {
+                "description": "Location for all resources."
+            }
+        },
+        "administratorLogin": {
+            "type": "string",
+            "defaultValue": "InsecureAdminLogin",
+            "metadata": {
+                "description": "The administrator username of the SQL logical server."
+            }
+        },
+        "administratorLoginPassword": {
+            "type": "securestring",
+            "metadata": {
+                "description": "The administrator password of the SQL logical server."
+            }
+        }
+    },
+    "variables": {
+        "appName": "[concat('sampleApp-', uniqueString(resourceGroup().id))]",
+        "appCurrentStack": "dotnet",
+        "appNetFrameworkVersion": "v5.0",
+        "appHostingPlanName": "[concat('sampleAppHostingPlan-', uniqueString(resourceGroup().id))]",
+        "appInsights": "[concat('sampleInsights-', variables('appName'))]",
+        "sqlLogicalServerName": "[concat('sampleSqlLogicalServer-', uniqueString(resourceGroup().id))]",
+        "sqlDBName": "SampleSqlDB",
+        "eventHubSku": "Basic",
+        "eventHubNamespaceName": "[concat('sampleEventHubNamespace-', uniqueString(resourceGroup().id))]",
+        "eventHubName": "[concat('sampleEventHub-', uniqueString(resourceGroup().id))]",
+        "eventHubSendAuthorizationRuleName": "SendAndListenOnly",
+        "eventHubSendRuleId": "[resourceId('Microsoft.EventHub/namespaces/eventhubs/authorizationRules', variables('eventHubNamespaceName'),variables('eventHubName'), variables('eventHubSendAuthorizationRuleName'))]",
+        "cosmosDbAccountName": "[concat('sample-cosmos-db-account-', uniqueString(resourceGroup().id))]",
+        "cosmosDbDefaultExperience": "Core (SQL)",
+        "cosmosDbDatabaseName": "SampleCosmosDb",
+        "cosmosDbContainerName": "SampleCosmosDbContainer"
+    },
+    "resources": [
+        {
+            "apiVersion": "2020-06-01",
+            "name": "[variables('appName')]",
+            "type": "Microsoft.Web/sites",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.Insights/components/', variables('appInsights'))]",
+                "[resourceId('Microsoft.Web/serverfarms/', variables('appHostingPlanName'))]",
+                "[resourceId('Microsoft.EventHub/namespaces/eventhubs/', variables('eventHubNamespaceName'), variables('eventHubName'))]",
+                "[resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosDbAccountName'))]"
+            ],
+            "properties": {
+                "siteConfig": {
+                    "connectionStrings": [
+                        {
+                            "name": "SqlConnectionString",
+                            "type": "SQLAzure",
+                            "connectionString": "[concat('Server=tcp:',
+                            variables('sqlLogicalServerName'),
+                            '.database.windows.net,1433;Initial Catalog=',
+                            variables('sqlDBName'),
+                            ';Persist Security Info=False;User ID=',
+                            parameters('administratorLogin'),
+                            ';Password=',
+                            parameters('administratorLoginPassword'),
+                            ';MultipleActiveResultSets=False;Encrypt=True;TrustServerCertificate=False;Connection Timeout=30;')]"
+                        },
+                        {
+                            "name": "EventHubConnectionString",
+                            "type": "Custom",
+                            "connectionString": "[listKeys(variables('eventHubSendRuleId'), providers('Microsoft.EventHub', 'namespaces/eventHubs').apiVersions[0]).primaryConnectionString]"
+                        },
+                        {
+                            "name": "CosmosDbConnectionString",
+                            "type": "Custom",
+                            "connectionString": "[listConnectionStrings(resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosDbAccountName')), providers('Microsoft.DocumentDB', 'databaseAccounts').apiVersions[0]).connectionStrings[0].connectionString]"
+                        }
+                    ],
+                    "appSettings": [
+                        {
+                            "name": "APPINSIGHTS_INSTRUMENTATIONKEY",
+                            "value": "[reference(resourceId('microsoft.insights/components/', variables('appInsights')), '2018-05-01-preview').InstrumentationKey]"
+                        },
+                        {
+                            "name": "ApplicationInsightsAgent_EXTENSION_VERSION",
+                            "value": "~2"
+                        },
+                        {
+                            "name": "XDT_MicrosoftApplicationInsights_Mode",
+                            "value": "default"
+                        },
+                        {
+                            "name": "DiagnosticServices_EXTENSION_VERSION",
+                            "value": "disabled"
+                        },
+                        {
+                            "name": "APPINSIGHTS_PROFILERFEATURE_VERSION",
+                            "value": "disabled"
+                        },
+                        {
+                            "name": "APPINSIGHTS_SNAPSHOTFEATURE_VERSION",
+                            "value": "disabled"
+                        },
+                        {
+                            "name": "InstrumentationEngine_EXTENSION_VERSION",
+                            "value": "disabled"
+                        },
+                        {
+                            "name": "SnapshotDebugger_EXTENSION_VERSION",
+                            "value": "disabled"
+                        },
+                        {
+                            "name": "XDT_MicrosoftApplicationInsights_BaseExtensions",
+                            "value": "disabled"
+                        }
+                    ],
+                    "metadata": [
+                        {
+                            "name": "CURRENT_STACK",
+                            "value": "[variables('appCurrentStack')]"
+                        }
+                    ],
+                    "netFrameworkVersion": "[variables('appNetFrameworkVersion')]",
+                    "alwaysOn": false
+                },
+                "serverFarmId": "[resourceId('Microsoft.Web/serverfarms', variables('appHostingPlanName'))]"
+            }
+        },
+        {
+            "apiVersion": "2020-06-01",
+            "name": "[variables('appHostingPlanName')]",
+            "type": "Microsoft.Web/serverfarms",
+            "location": "[parameters('location')]",
+            "properties": {
+                "name": "[variables('appHostingPlanName')]",
+                "workerSize": "0",
+                "workerSizeId": 0,
+                "numberOfWorkers": 1
+            },
+            "sku": {
+                "Tier": "Basic",
+                "Name": "B1"
+            }
+        },
+        {
+            "apiVersion": "2020-02-02-preview",
+            "name": "[variables('appInsights')]",
+            "type": "microsoft.insights/components",
+            "location": "[parameters('location')]",
+            "properties": {
+                "ApplicationId": "[variables('appName')]"
+            }
+        },
+        {
+            "type": "Microsoft.Sql/servers",
+            "apiVersion": "2020-02-02-preview",
+            "name": "[variables('sqlLogicalServerName')]",
+            "location": "[parameters('location')]",
+            "properties": {
+                "administratorLogin": "[parameters('administratorLogin')]",
+                "administratorLoginPassword": "[parameters('administratorLoginPassword')]"
+            },
+            "resources": [
+                {
+                    "type": "databases",
+                    "apiVersion": "2020-08-01-preview",
+                    "name": "[variables('sqlDBName')]",
+                    "location": "[parameters('location')]",
+                    "sku": {
+                        "name": "GP_S_Gen5",
+                        "tier": "GeneralPurpose",
+                        "family": "Gen5",
+                        "capacity": 1
+                    },
+                    "dependsOn": [
+                        "[resourceId('Microsoft.Sql/servers', concat(variables('sqlLogicalServerName')))]"
+                    ]
+                },
+                {
+                    // not ideal, should probably be using VNets and stuff, but good enough for demos
+                    "name": "AllowAllMicrosoftAzureIps",
+                    "type": "firewallrules",
+                    "apiVersion": "2020-08-01-preview",
+                    "location": "[parameters('location')]",
+                    "dependsOn": [
+                        "[resourceId('Microsoft.Sql/servers', concat(variables('sqlLogicalServerName')))]"
+                    ],
+                    "properties": {
+                        "endIpAddress": "0.0.0.0",
+                        "startIpAddress": "0.0.0.0"
+                    }
+                }
+            ]
+        },
+        {
+            "type": "Microsoft.EventHub/namespaces",
+            "apiVersion": "2018-01-01-preview",
+            "name": "[variables('eventHubNamespaceName')]",
+            "location": "[parameters('location')]",
+            "sku": {
+                "name": "[variables('eventHubSku')]",
+                "tier": "[variables('eventHubSku')]",
+                "capacity": 1
+            },
+            "properties": {
+                "isAutoInflateEnabled": false,
+                "maximumThroughputUnits": 0
+            }
+        },
+        {
+            "type": "Microsoft.EventHub/namespaces/eventhubs",
+            "apiVersion": "2017-04-01",
+            "name": "[concat(variables('eventHubNamespaceName'), '/', variables('eventHubName'))]",
+            "location": "[parameters('location')]",
+            "dependsOn": [
+                "[resourceId('Microsoft.EventHub/namespaces', variables('eventHubNamespaceName'))]"
+            ],
+            "properties": {
+                "messageRetentionInDays": 1,
+                "partitionCount": 3
+            },
+            "resources": [
+                {
+                    "apiVersion": "2017-04-01",
+                    "name": "[variables('eventHubSendAuthorizationRuleName')]",
+                    "type": "authorizationRules",
+                    "dependsOn": [
+                        "[concat('Microsoft.EventHub/namespaces/', variables('eventHubNamespaceName'),'/eventhubs/',variables('eventHubName'))]"
+                    ],
+                    "properties": {
+                        "rights": [
+                            "Send",
+                            "Listen"
+                        ]
+                    }
+                }
+            ]
+        },
+        {
+            "type": "Microsoft.DocumentDB/databaseAccounts",
+            "apiVersion": "2020-06-01-preview",
+            "name": "[variables('cosmosDbAccountName')]",
+            "location": "[parameters('location')]",
+            "kind": "GlobalDocumentDB",
+            "properties": {
+                "databaseAccountOfferType": "Standard",
+                "locations": [
+                    {
+                        "id": "[concat(variables('cosmosDbAccountName'), '-', parameters('location'))]",
+                        "failoverPriority": 0,
+                        "locationName": "[parameters('location')]"
+                    }
+                ],
+                "capabilities": [
+                    {
+                        "name": "EnableServerless"
+                    }
+                ],
+                "enableAutomaticFailover": false
+            },
+            "tags": {
+                "defaultExperience": "[variables('cosmosDbDefaultExperience')]",
+                "CosmosAccountType": "Non-Production"
+            }
+        },
+        {
+            "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases",
+            "apiVersion": "2020-06-01-preview",
+            "name": "[concat(variables('cosmosDbAccountName'), '/', variables('cosmosDbDatabaseName'))]",
+            "dependsOn": [ "[resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosDbAccountName'))]" ],
+            "properties": {
+                "resource": {
+                    "id": "[variables('cosmosDbDatabaseName')]"
+                }
+            }
+        },
+        {
+            "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
+            "apiVersion": "2020-06-01-preview",
+            "name": "[concat(variables('cosmosDbAccountName'), '/', variables('cosmosDbDatabaseName'), '/', variables('cosmosDbContainerName'))]",
+            "dependsOn": [ "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', variables('cosmosDbAccountName'), variables('cosmosDbDatabaseName'))]" ],
+            "properties": {
+                "resource": {
+                    "id": "[variables('cosmosDbContainerName')]",
+                    "partitionKey": {
+                        "paths": [
+                            "/id" // this is not a good partition key, but this is also not a good demo application to have one 🙂
+                        ],
+                        "kind": "Hash"
+                    }
+                }
+            }
+        }
+    ],
+    "outputs": {
+        "appName": {
+            "type": "string",
+            "value": "[variables('appName')]"
+        }
+    }
+}
